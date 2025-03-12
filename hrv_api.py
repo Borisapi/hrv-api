@@ -1,12 +1,19 @@
-from fastapi import FastAPI, WebSocket, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 import asyncio
 import datetime
 import json
 import os
+from fastapi import FastAPI, WebSocket
+from fastapi.responses import JSONResponse
 
-app = FastAPI()
+# FastAPI-Instanz mit korrekter OpenAPI-Server-Definition
+app = FastAPI(
+    title="HRV API",
+    description="Eine API zur Erfassung und Bereitstellung von Herzratenvariabilitätsdaten (HRV)",
+    version="1.0",
+    servers=[
+        {"url": "https://hrv-api-5jks.onrender.com", "description": "Live API auf Render"}
+    ]
+)
 
 # Speicher für die letzten HRV-Daten
 latest_hrv_data = {
@@ -21,40 +28,12 @@ latest_hrv_data = {
 # Liste der aktiven WebSocket-Verbindungen
 websocket_clients = set()
 
-class HRVData(BaseModel):
-    heart_rate: float
-    rmssd: float
-    sdnn: float
-    lf_hf: float
-    pnn50: float
-
 @app.get("/hrv")
 async def get_hrv_data():
     """ Gibt die neuesten HRV-Daten als JSON zurück """
     if latest_hrv_data["timestamp"] is None:
         return JSONResponse(status_code=404, content={"error": "Noch keine HRV-Daten verfügbar"})
     return latest_hrv_data
-
-@app.post("/hrv")
-async def receive_hrv_data(data: HRVData):
-    """ Empfängt HRV-Daten und speichert sie """
-    latest_hrv_data.update({
-        "timestamp": datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3],
-        "heart_rate": data.heart_rate,
-        "rmssd": data.rmssd,
-        "sdnn": data.sdnn,
-        "lf_hf": data.lf_hf,
-        "pnn50": data.pnn50
-    })
-
-    # Daten an alle verbundenen WebSocket-Clients senden
-    for client in websocket_clients:
-        try:
-            await client.send_text(json.dumps(latest_hrv_data))
-        except Exception:
-            websocket_clients.remove(client)
-
-    return {"message": "HRV-Daten erfolgreich empfangen"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -68,6 +47,27 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
     finally:
         websocket_clients.remove(websocket)
+
+@app.post("/hrv/update")
+async def update_hrv_data(heart_rate: float, rmssd: float, sdnn: float, lf_hf: float, pnn50: float):
+    """ Aktualisiert die neuesten HRV-Daten und sendet sie an WebSocket-Clients """
+    latest_hrv_data.update({
+        "timestamp": datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3],
+        "heart_rate": heart_rate,
+        "rmssd": rmssd,
+        "sdnn": sdnn,
+        "lf_hf": lf_hf,
+        "pnn50": pnn50
+    })
+
+    # Daten an alle verbundenen WebSocket-Clients senden
+    for client in websocket_clients:
+        try:
+            await client.send_text(json.dumps(latest_hrv_data))
+        except Exception:
+            websocket_clients.remove(client)
+
+    return {"message": "HRV-Daten aktualisiert", "data": latest_hrv_data}
 
 # Starte die API mit dynamischem Port für Render
 if __name__ == "__main__":
