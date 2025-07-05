@@ -2,12 +2,11 @@ import asyncio
 import datetime
 import json
 import os
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
-# Speicher für HRV- und RR-Daten
 latest_hrv_data = {
     "timestamp": None,
     "heart_rate": None,
@@ -22,7 +21,8 @@ latest_rr_data = {
     "rr_intervals": []
 }
 
-websocket_clients = set()
+websocket_clients_hrv = set()
+websocket_clients_rr = set()
 
 @app.get("/hrv")
 async def get_hrv_data():
@@ -40,7 +40,7 @@ async def update_hrv_data(data: dict):
         "lf_hf": data.get("lf_hf"),
         "pnn50": data.get("pnn50")
     })
-    await broadcast_hrv_data()
+    await broadcast_data(latest_hrv_data, websocket_clients_hrv)
     return {"message": "HRV-Daten aktualisiert", "data": latest_hrv_data}
 
 @app.post("/rr/update")
@@ -49,6 +49,7 @@ async def update_rr_data(data: dict):
         "timestamp": datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3],
         "rr_intervals": data.get("rr_intervals", [])
     })
+    await broadcast_data(latest_rr_data, websocket_clients_rr)
     return {"message": "RR-Daten aktualisiert", "data": latest_rr_data}
 
 @app.get("/rr")
@@ -57,28 +58,38 @@ async def get_rr_data():
         return JSONResponse(status_code=404, content={"error": "Noch keine RR-Daten verfügbar"})
     return latest_rr_data
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+@app.websocket("/ws/hrv")
+async def websocket_hrv(websocket: WebSocket):
     await websocket.accept()
-    websocket_clients.add(websocket)
+    websocket_clients_hrv.add(websocket)
     try:
         while True:
             await asyncio.sleep(1)
     except WebSocketDisconnect:
-        websocket_clients.remove(websocket)
+        websocket_clients_hrv.remove(websocket)
 
-async def broadcast_hrv_data():
-    if not websocket_clients:
+@app.websocket("/ws/rr")
+async def websocket_rr(websocket: WebSocket):
+    await websocket.accept()
+    websocket_clients_rr.add(websocket)
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        websocket_clients_rr.remove(websocket)
+
+async def broadcast_data(data, clients):
+    if not clients:
         return
-    data = json.dumps(latest_hrv_data)
+    message = json.dumps(data)
     disconnected_clients = set()
-    for client in websocket_clients:
+    for client in clients:
         try:
-            await client.send_text(data)
+            await client.send_text(message)
         except WebSocketDisconnect:
             disconnected_clients.add(client)
     for client in disconnected_clients:
-        websocket_clients.remove(client)
+        clients.remove(client)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
