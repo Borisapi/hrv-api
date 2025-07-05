@@ -4,6 +4,8 @@ import json
 import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List, Optional
 
 app = FastAPI()
 
@@ -19,9 +21,17 @@ latest_hrv_data = {
 
 # Speicher für RR-Intervalle
 rr_storage = []
+rr_detailed_storage = []
 
-# Liste der aktiven WebSocket-Verbindungen
+# WebSocket-Verbindungen
 websocket_clients = set()
+
+class RRDataPoint(BaseModel):
+    timestamp: str
+    rr: int
+
+class RRUploadPayload(BaseModel):
+    data: List[RRDataPoint]
 
 @app.get("/hrv")
 async def get_hrv_data():
@@ -50,9 +60,18 @@ async def update_rr_data(data: dict):
     rr_storage.extend(rr_values)
     return {"message": "RR-Daten erfolgreich gespeichert", "anzahl": len(rr_storage)}
 
+@app.post("/rr/upload")
+async def upload_detailed_rr_data(payload: RRUploadPayload):
+    rr_detailed_storage.extend(payload.data)
+    return {"message": "Detaillierte RR-Daten gespeichert", "anzahl": len(payload.data)}
+
 @app.get("/rr")
 async def get_rr_data():
     return {"rr_intervals": rr_storage}
+
+@app.get("/rr/all")
+async def get_all_detailed_rr_data():
+    return rr_detailed_storage
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
