@@ -1,102 +1,56 @@
-import asyncio
-import datetime
-import json
-import os
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
+from datetime import datetime, timedelta
 
-app = FastAPI()
+app = FastAPI(title="HRV API", version="1.1.0")
 
-# Speicher für die letzten HRV-Daten
-latest_hrv_data = {
-    "timestamp": None,
-    "heart_rate": None,
-    "rmssd": None,
-    "sdnn": None,
-    "lf_hf": None,
-    "pnn50": None
-}
-
-# Speicher für RR-Intervalle
-rr_storage = []
-rr_detailed_storage = []
-
-# WebSocket-Verbindungen
-websocket_clients = set()
-
-class RRDataPoint(BaseModel):
-    timestamp: str
+# Datenspeicher für RR- und HRV-Daten
+class RRData(BaseModel):
+    timestamp: datetime
     rr: int
 
-class RRUploadPayload(BaseModel):
-    data: List[RRDataPoint]
+class HRVData(BaseModel):
+    timestamp: datetime
+    heart_rate: float
+    rmssd: float = None
+    sdnn: float = None
+    lf_hf: float = None
+    pnn50: float = None
 
-@app.get("/hrv")
-async def get_hrv_data():
-    if latest_hrv_data["timestamp"] is None:
-        return JSONResponse(status_code=404, content={"error": "Noch keine HRV-Daten verfügbar"})
-    return latest_hrv_data
+rr_data_store: List[RRData] = []
+latest_hrv: HRVData | None = None
 
-@app.post("/hrv/update")
-async def update_hrv_data(data: dict):
-    latest_hrv_data.update({
-        "timestamp": datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3],
-        "heart_rate": data.get("heart_rate"),
-        "rmssd": data.get("rmssd"),
-        "sdnn": data.get("sdnn"),
-        "lf_hf": data.get("lf_hf"),
-        "pnn50": data.get("pnn50")
-    })
-    await broadcast_hrv_data()
-    return {"message": "HRV-Daten aktualisiert", "data": latest_hrv_data}
+@app.get("/rr", response_model=List[int])
+def get_rr_intervals():
+    return [entry.rr for entry in rr_data_store[-100:]]
+
+@app.get("/rr/all", response_model=List[RRData])
+def get_all_rr_data():
+    return rr_data_store
+
+@app.get("/rr/recent", response_model=List[RRData])
+def get_recent_rr_data(minutes: int = Query(5, ge=1, le=60)):
+    cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+    return [entry for entry in rr_data_store if entry.timestamp >= cutoff]
 
 @app.post("/rr/update")
-async def update_rr_data(data: dict):
-    rr_values = data.get("rr_intervals", [])
-    if not isinstance(rr_values, list) or not all(isinstance(rr, int) for rr in rr_values):
-        return JSONResponse(status_code=400, content={"error": "Ungültiges Format für RR-Daten"})
-    rr_storage.extend(rr_values)
-    return {"message": "RR-Daten erfolgreich gespeichert", "anzahl": len(rr_storage)}
+def update_rr_data(rr_intervals: List[RRData]):
+    rr_data_store.extend(rr_intervals)
+    return {"status": "OK", "count": len(rr_intervals)}
 
-@app.post("/rr/upload")
-async def upload_detailed_rr_data(payload: RRUploadPayload):
-    rr_detailed_storage.extend(payload.data)
-    return {"message": "Detaillierte RR-Daten gespeichert", "anzahl": len(payload.data)}
+@app.get("/hrv", response_model=HRVData)
+def get_hrv_data():
+    if latest_hrv is None:
+        return {"detail": "No HRV data available"}, 404
+    return latest_hrv
 
-@app.get("/rr")
-async def get_rr_data():
-    return {"rr_intervals": rr_storage}
+@app.post("/hrv/update")
+def update_hrv_data(hrv: HRVData):
+    global latest_hrv
+    latest_hrv = hrv
+    return {"status": "HRV data updated"}
 
-@app.get("/rr/all")
-async def get_all_detailed_rr_data():
-    return rr_detailed_storage
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    websocket_clients.add(websocket)
-    try:
-        while True:
-            await asyncio.sleep(1)
-    except WebSocketDisconnect:
-        websocket_clients.remove(websocket)
-
-async def broadcast_hrv_data():
-    if not websocket_clients:
-        return
-    data = json.dumps(latest_hrv_data)
-    disconnected_clients = set()
-    for client in websocket_clients:
-        try:
-            await client.send_text(data)
-        except WebSocketDisconnect:
-            disconnected_clients.add(client)
-    for client in disconnected_clients:
-        websocket_clients.remove(client)
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=port)
+@app.get("/ws")
+def ws_hrv_live():
+    return {"detail": "WebSocket placeholder – implement if needed"}
