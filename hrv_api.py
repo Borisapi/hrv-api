@@ -41,7 +41,9 @@ def get_all_rr_data():
 
 @app.get("/rr/recent", response_model=List[RRData])
 def get_recent_rr_data(minutes: int = Query(2, ge=1, le=60)):
-    cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+   from datetime import timezone
+cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+
     try:
         return [entry for entry in rr_data_store if entry.timestamp >= cutoff]
     except Exception as e:
