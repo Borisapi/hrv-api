@@ -15,6 +15,10 @@ class HRVFullData(BaseModel):
 # In-Memory Speicher (z. B. für spätere Analyse oder Export)
 data_store: list[HRVFullData] = []
 
+@app.get("/", summary="API-Status")
+def root_status():
+    return {"status": "HRV API läuft – bitte POST verwenden für Datenübermittlung"}
+
 @app.post("/", summary="Empfängt vollständige HRV-Daten")
 def receive_hrv_data(data: HRVFullData):
     data_store.append(data)
