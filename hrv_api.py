@@ -37,15 +37,22 @@ def receive_hrv_data(data: HRVFullData):
     save_to_file()
     return {"status": "OK", "stored": len(data_store)}
 
-@app.get("/all", response_model=list[HRVFullData], summary="Alle gespeicherten Daten anzeigen")
-def get_all_data():
-    return data_store
+# PAGINATED /all ENDPOINT
+@app.get("/all", response_model=list[HRVFullData], summary="Alle gespeicherten Daten anzeigen (paginierte Version)")
+def get_all_data(
+    skip: int = Query(0, ge=0, description="How many records to skip (offset)"),
+    limit: int = Query(1000, ge=1, le=10000, description="How many records to return in this page"),
+):
+    """
+    Returns a page of HRV data entries (default 1000 per call).
+    Example: /all?skip=0&limit=1000 (first page), /all?skip=1000&limit=1000 (second page)
+    """
+    return data_store[skip: skip + limit]
 
 @app.get("/latest", response_model=Optional[HRVFullData], summary="Letzter empfangener Eintrag")
 def get_latest():
     return data_store[-1] if data_store else None
 
-# NEW: Download raw HRV JSON file
 @app.get("/download_hrv_json", summary="Download raw HRV JSON file")
 def download_hrv_json():
     if os.path.exists(DATA_FILE):
@@ -53,10 +60,10 @@ def download_hrv_json():
     else:
         return {"error": "File not found."}
 
-# NEW: Filtered retrieval by time window
 @app.get("/data_by_time", response_model=list[HRVFullData], summary="Get data between two timestamps")
 def data_by_time(
     start: datetime = Query(..., description="Start timestamp (ISO format)"),
     end: datetime = Query(..., description="End timestamp (ISO format)")
 ):
     return [d for d in data_store if start <= d.timestamp <= end]
+
